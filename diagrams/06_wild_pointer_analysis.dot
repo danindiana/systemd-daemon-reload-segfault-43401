@@ -1,0 +1,51 @@
+digraph WildPointerAnalysis {
+    rankdir=TB;
+    bgcolor="#0d0d0d";
+    fontname="Courier";
+    label="Register-level crash analysis (from the preserved coredump)";
+    labelloc=t;
+    fontsize=20;
+    fontcolor="#00ff9f";
+
+    node [shape=box, style=filled, fillcolor="#1a1a2e", color="#00ff9f", fontname="Courier", fontcolor="#e0e0e0", penwidth=2];
+    edge [penwidth=2, fontname="Courier", fontcolor="#ffcc00", color="#00b4ff"];
+
+    source [label="/var/lib/systemd/coredump/\ncore.systemd...2246840....zst\n(still on disk; coredumpctl said\n'inaccessible' via normal lookup)", fillcolor="#0d1a2a", color="#00b4ff"];
+    gdbcmd [label="sudo zstd -d ...\ngdb -nx -batch -ex 'core-file ...'\n(same installed binary,\nbuild-id 1dc20c4e...)", fillcolor="#0d1a2a", color="#00b4ff"];
+    source -> gdbcmd;
+
+    fault [label="Fault instruction:\n__strlen_avx2+29\nvpcmpeqb (%rdi),%ymm0,%ymm1\n(called from cescape())", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000", style="filled,bold"];
+    gdbcmd -> fault;
+
+    subgraph cluster_regs {
+        label="Register state at the fault";
+        color="#ffcc00"; fontcolor="#ffcc00"; fontname="Courier"; style=bold;
+        rdi [label="$rdi = 0xdd0000\n(also copied to $rdx by\nstrlen's own prologue;\n$rbp also 0xdd0000)", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000"];
+        rsi [label="$rsi = 0x5dc0a152292c\nresolves to a LIVE string:\n\"status-text\"", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
+    }
+    fault -> rdi;
+    fault -> rsi [style=dashed, color="#00b4ff", label="  sanity check:\n  tooling is sound"];
+
+    subgraph cluster_map {
+        label="info proc mappings";
+        color="#ffcc00"; fontcolor="#ffcc00"; fontname="Courier"; style=bold;
+        low [label="0x0 .. 0x5dc0a13ea000\nNO MAPPINGS AT ALL\n(mmap_min_addr-reserved\nlow region)", fillcolor="#2a0d20", color="#ff0090", fontcolor="#ff0090"];
+        first [label="0x5dc0a13ea000\nfirst real mapping:\n/usr/lib/systemd/systemd", fillcolor="#0d2a1a", color="#00ff9f"];
+        target [label="0xdd0000\n⬅ FAULT ADDRESS\nfalls here, far below\nany valid mapping", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000", style="filled,bold"];
+        low -> target [style=invis];
+        target -> first [label="  gap is many orders\n  of magnitude", color="#ff0090", fontcolor="#ff0090"];
+    }
+    rdi -> target [color="#ff0000", penwidth=3];
+
+    signature [label="0xdd0000 as 2x 32-bit halves:\nlow  = 0x00dd0000\nhigh = 0x00000000\n⇒ upper 32 bits all zero", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600"];
+    target -> signature;
+
+    conclusion [label="Signature consistent with a\ntruncated 32-bit value used where\na 64-bit char* was expected\n(type confusion / UAF /\nuninitialized read)", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600", style="filled,bold"];
+    signature -> conclusion;
+
+    supersede [label="Supersedes the \"malformed\nPATH= text\" theory entirely —\nthis is a memory-safety bug,\nnot a reaction to unit-file text", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f", style="filled,bold"];
+    conclusion -> supersede;
+
+    offsets [shape=note, fillcolor="#2a2a1a", color="#ffcc00", fontcolor="#ffcc00",
+        label="Binary-relative offsets for still-unresolved frames\n(Ubuntu debuginfod lacks symbols for this exact build\n249.11-0ubuntu3.22, build-id 1dc20c4ec464ebf576ddf5ca5954836fee84b922):\n#1 +0x42b1c   #6 +0x9fe5b   #7 +0x89fdc\n#8 +0x9336e   #9 +0x41a7b   #12 +0x426b5"];
+}

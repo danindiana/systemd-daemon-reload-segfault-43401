@@ -2,7 +2,7 @@ digraph EvidenceMap {
     rankdir=TB;
     bgcolor="#0d0d0d";
     fontname="Courier";
-    label="Case status: systemd/systemd #43401";
+    label="Case status: systemd/systemd #43401 (updated after core analysis)";
     labelloc=t;
     fontsize=20;
     fontcolor="#00ff9f";
@@ -17,31 +17,38 @@ digraph EvidenceMap {
         c2 [label="Crash occurred during\nstate serialization,\nbefore file re-parse stage", fillcolor="#0d2a1a", color="#00ff9f"];
         c3 [label="The malformed PATH= line\nexisted 3 days pre-crash,\nsurvived 4 prior reloads", fillcolor="#0d2a1a", color="#00ff9f"];
         c4 [label="Fixing the line + reload\nnow completes cleanly on\nworlock", fillcolor="#0d2a1a", color="#00ff9f"];
+        c5 [label="Fault register $rdi = 0xdd0000\nconfirmed UNMAPPED via\ninfo proc mappings", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f", style="filled,bold"];
+        c6 [label="0xdd0000's upper 32 bits\nare zero — truncated-value\nsignature, not string content", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f", style="filled,bold"];
     }
 
-    subgraph cluster_ruledout {
-        label="RULED OUT / WEAKENED";
+    subgraph cluster_deadtheory {
+        label="RULED OUT (dead, not just weakened)";
         color="#ff0090"; fontcolor="#ff0090"; fontname="Courier"; style=bold;
         r1 [label="Malformed PATH= text as\nthe literal string cescape()\nescaped and crashed on", fillcolor="#2a0d20", color="#ff0090"];
         r2 [label="Version-specific bug\n(v255 sandbox reproduces\nthe same safe rejection)", fillcolor="#2a0d20", color="#ff0090"];
+        r3 [label="Mid-upgrade library/ABI\nmismatch (no apt/dpkg activity\nat 21:34:37)", fillcolor="#2a0d20", color="#ff0090"];
+        r4 [label="Concurrent second\ndaemon-reload race\n(single shell session, sequential)", fillcolor="#2a0d20", color="#ff0090"];
+        r5 [label="System-wide OOM or\nhardware ECC/MCE fault\n(no kernel events that boot)", fillcolor="#2a0d20", color="#ff0090"];
     }
 
     subgraph cluster_unknown {
         label="STILL UNKNOWN";
         color="#ff6600"; fontcolor="#ff6600"; fontname="Courier"; style=bold;
-        u1 [label="What in-memory state\ncescape() was actually\nescaping at 21:34:37", fillcolor="#3a2200", color="#ff6600"];
-        u2 [label="Whether this is a\ngeneral systemd bug class\nor a one-off memory fault", fillcolor="#3a2200", color="#ff6600"];
-        u3 [label="Reproduction requires\nheap-state conditions not\nyet identified", fillcolor="#3a2200", color="#ff6600"];
+        u1 [label="Which call site / which field\nproduced 0xdd0000 — not yet\nwalked back via CFI", fillcolor="#3a2200", color="#ff6600"];
+        u2 [label="Exact mechanism: use-after-free,\ntype confusion, or uninitialized\nread — undetermined", fillcolor="#3a2200", color="#ff6600"];
+        u3 [label="Whether this is a general\nsystemd bug class or a\none-off memory fault", fillcolor="#3a2200", color="#ff6600"];
     }
 
+    c5 -> c6 [color="#00ff9f"];
     c3 -> r1 [label="  survived reloads\n  ⇒ unlikely trigger", color="#ff0090", fontcolor="#ff0090"];
-    r1 -> u1 [label="  if not this string,\n  then what?", color="#ff6600", fontcolor="#ff6600"];
+    c6 -> r1 [label="  confirmed dead:\n  fault is a pointer,\n  not string content", color="#ff0090", fontcolor="#ff0090", penwidth=3];
     c2 -> u1 [color="#ff6600"];
-    r2 -> u2 [color="#ff6600"];
+    c6 -> u2 [color="#ff6600", label="  raises new\n  question"];
+    r2 -> u3 [color="#ff6600"];
 
     status [shape=note, fillcolor="#2a2a1a", color="#ffcc00", fontcolor="#ffcc00",
-        label="Net position: root cause of the SIGSEGV remains\nopen. The malformed unit file was a real bug worth\nfixing on its own merits, but the evidence no longer\nsupports it as the crash trigger. Offered to test\nother malformed-Environment= shapes against v255\nif maintainers have a more specific pattern in mind."];
+        label="Net position (updated): register-level analysis of the\npreserved coredump shows the crash is a wild/unmapped\npointer with a truncated-32-bit-value signature — a likely\nmemory-safety defect in serialize_item_escaped()'s call\nchain, not a reaction to unusual text in any unit file.\nThe malformed PATH= line was still worth fixing on its own\nmerits, but is no longer considered relevant to the SIGSEGV.\nRoot cause (which allocation/field held 0xdd0000, and why)\nremains open."];
 
     legend [shape=note, fillcolor="#1a1a2e", color="#00b4ff", fontcolor="#00b4ff",
-        label="Legend: green=confirmed  pink=ruled out/weakened\norange=open question"];
+        label="Legend: green=confirmed  pink=ruled out (dead)\norange=open question"];
 }

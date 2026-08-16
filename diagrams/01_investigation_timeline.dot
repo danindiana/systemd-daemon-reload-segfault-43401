@@ -41,7 +41,10 @@ digraph InvestigationTimeline {
         fix [label="PATH= line fixed\ndaemon-reload succeeds cleanly", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
         repro [label="v255 reproducer built\n(isolated Docker container)\nNO crash — same rejection behavior", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
         correction [label="Journal re-analysis:\nline survived 4 prior reloads\n→ earlier claim walked back", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600"];
-        filed -> ask -> found -> fix -> repro -> correction;
+        coredump [label="Raw core file still on disk\n(coredumpctl said 'inaccessible'\nbut the .zst was intact)", fillcolor="#0d1a2a", color="#00b4ff"];
+        wildptr [label="Register-level analysis:\n$rdi = 0xdd0000, unmapped,\nupper 32 bits zero\n⇒ WILD POINTER, not a string", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f", style="filled,bold"];
+        supersede [label="PATH= theory superseded:\nlikely type-confusion / UAF\nin serialize_item_escaped()\nroot cause still open", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600"];
+        filed -> ask -> found -> fix -> repro -> correction -> coredump -> wildptr -> supersede;
     }
     reset -> filed [color="#00b4ff"];
 

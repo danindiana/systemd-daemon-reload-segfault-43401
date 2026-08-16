@@ -6,17 +6,20 @@
   <img alt="systemd versions tested" src="https://img.shields.io/badge/systemd-249%20%7C%20255-1a1a2e?style=flat-square&logo=linux&logoColor=00ff9f">
   <img alt="diagrams" src="https://img.shields.io/badge/diagrams-graphviz%20%2F%20dot-00b4ff?style=flat-square">
   <img alt="reproducer" src="https://img.shields.io/badge/reproducer-docker%20sandboxed-0db7ed?style=flat-square&logo=docker&logoColor=white">
+  <img alt="crash mechanism" src="https://img.shields.io/badge/crash%20mechanism-wild%20pointer%20(unmapped)-ff0000?style=flat-square">
   <img alt="root cause" src="https://img.shields.io/badge/root%20cause-still%20open-ff6600?style=flat-square">
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-00ff9f?style=flat-square"></a>
 </p>
 
-Five Graphviz diagrams (plus full write-up) explaining the investigation
+Six Graphviz diagrams (plus full write-up) explaining the investigation
 behind **[systemd/systemd#43401](https://github.com/systemd/systemd/issues/43401)**:
 a PID 1 SIGSEGV in `cescape()` / `serialize_item_escaped()` during
 `systemctl daemon-reload`, which froze the machine and required a physical
 hard reset to recover — followed by a fix attempt, a minimal reproducer
-built against a newer systemd release, and an honest correction after the
-reproducer's results didn't hold up the original hypothesis.
+built against a newer systemd release, an honest correction after the
+reproducer's results didn't hold up the original hypothesis, and finally
+register-level analysis of the preserved coredump showing the crash is a
+wild/unmapped pointer, not a reaction to any unit file's text.
 
 This repo exists purely to host rendered images for the upstream issue
 thread (`systemd/systemd` isn't writable by this account, so inline image
@@ -33,7 +36,8 @@ permanent, browsable home independent of the GitHub issue's comment order.
 | **Crash site** | `cescape()` called from `serialize_item_escaped()` (`src/shared/serialize.c`), confirmed against the matching v249 source tree and the coredump backtrace |
 | **Initial hypothesis** | A malformed `Environment="PATH=..."` value in `ollama.service` (containing embedded `npm` CLI error text, raw newlines, and an unescaped quote) was the string `cescape()` choked on |
 | **What the reproducer found** | That exact malformed value is **parser-rejected identically** on systemd 249 *and* 255, and had already survived **4 prior `daemon-reload`s over 3 days** before the crash — weakening the case that it was the trigger |
-| **Current status** | The malformed unit file was fixed regardless (it was genuinely broken), but **the actual root cause of the SIGSEGV remains unidentified** |
+| **What the coredump showed** | The preserved crash core was still on disk. Register-level analysis at the fault instruction shows `$rdi` (the "string" pointer passed into `cescape()`) = `0xdd0000` — **confirmed unmapped** memory, with its upper 32 bits all zero (a truncated-value signature). This is a **wild pointer, not a string** — the malformed-`PATH=` theory is now considered dead, not just weakened |
+| **Current status** | The malformed unit file was fixed regardless (it was genuinely broken), but the crash itself is now understood to be a **likely memory-safety defect** (type confusion / use-after-free / uninitialized read) in the `serialize_item_escaped()` call chain. **The exact root cause — which allocation/field produced `0xdd0000`, and why — remains open** |
 
 ## Timeline
 
@@ -49,7 +53,10 @@ permanent, browsable home independent of the GitHub issue's comment order.
 | Aug 16 | Line fixed, `systemd-analyze verify` passed, `daemon-reload` completed cleanly — [reported](https://github.com/systemd/systemd/issues/43401#issuecomment-5308658793) as a likely fix |
 | Aug 16 | Minimal reproducer built: isolated systemd 255 sandbox (Docker, own PID 1, host untouched) — **no crash**, identical `Invalid syntax, ignoring` rejection |
 | Aug 16 | Re-checking worlock's own journal shows the malformed line predates the crash by 3 days and survived 4 earlier reloads — [correction posted](https://github.com/systemd/systemd/issues/43401#issuecomment-5308683701), walking back the fix-as-root-cause claim |
-| Aug 16 | These 5 diagrams built and [posted](https://github.com/systemd/systemd/issues/43401#issuecomment-5308720889) to summarize the above visually |
+| Aug 16 | 5 diagrams built and [posted](https://github.com/systemd/systemd/issues/43401#issuecomment-5308720889) to summarize the investigation visually |
+| Aug 16 | Discovered the raw crash coredump was still on disk; decompressed and analyzed it with `gdb` at the register level (not just symbols) |
+| Aug 16 | Found `$rdi` = `0xdd0000` at the fault instruction — confirmed unmapped, upper 32 bits zero — a **wild pointer**, not unusual string content; also ruled out concurrent apt/dpkg activity, a concurrent reload race, and kernel OOM/MCE events for that exact second — [reported](https://github.com/systemd/systemd/issues/43401#issuecomment-5308769845), superseding the PATH= theory entirely |
+| Aug 16 | Diagrams 1 and 5 updated and a 6th diagram added to reflect the wild-pointer finding (this update) |
 
 ## The diagrams
 
@@ -111,11 +118,26 @@ docker run -d --name sysd-repro \
   systemd-repro:noble
 ```
 
-### 5. Case status / evidence map
-A confirmed / ruled-out / still-unknown breakdown, closing out where the
-investigation currently stands.
+### 5. Case status / evidence map *(updated)*
+A confirmed / ruled-out / still-unknown breakdown. Updated after the
+coredump analysis: the malformed-`PATH=` theory moved from "weakened" to
+"confirmed dead," the wild-pointer register evidence was added as
+confirmed fact, and three more alternate hypotheses (mid-upgrade ABI
+mismatch, a concurrent reload race, system-wide OOM/hardware fault) were
+checked and ruled out.
 
 ![evidence map](diagrams/05_evidence_map_conclusion.png)
+
+### 6. Register-level crash analysis *(new)*
+Walks through the coredump analysis end to end: locating the still-present
+core file, the fault instruction inside `__strlen_avx2`, the register
+state at the moment of the fault (`$rdi = 0xdd0000`, unmapped, vs. a
+neighboring register holding a genuinely valid string pointer as a sanity
+check), the memory-map evidence that `0xdd0000` isn't mapped anywhere in
+the process, the truncated-32-bit-value signature, and binary-relative
+offsets for the still-unresolved backtrace frames.
+
+![wild pointer analysis](diagrams/06_wild_pointer_analysis.png)
 
 ## Repository structure
 
@@ -128,7 +150,8 @@ investigation currently stands.
     ├── 02_reload_internals_crash_point.{dot,png,svg}
     ├── 03_path_corruption_before_after.{dot,png,svg}
     ├── 04_reproducer_methodology.{dot,png,svg}
-    └── 05_evidence_map_conclusion.{dot,png,svg}
+    ├── 05_evidence_map_conclusion.{dot,png,svg}
+    └── 06_wild_pointer_analysis.{dot,png,svg}
 ```
 
 ## Regenerating the diagrams
@@ -151,7 +174,8 @@ Rendered with Graphviz 2.43.0 (`dot -V`). No other dependencies.
 - Comment 1 — original report + `systemctl cat` output: [#issuecomment-5305731339](https://github.com/systemd/systemd/issues/43401#issuecomment-5305731339) *(maintainer request this replies to)*
 - Comment 2 — fix applied, `daemon-reload` confirmed stable: [#issuecomment-5308658793](https://github.com/systemd/systemd/issues/43401#issuecomment-5308658793)
 - Comment 3 — reproducer results + corrected analysis: [#issuecomment-5308683701](https://github.com/systemd/systemd/issues/43401#issuecomment-5308683701)
-- Comment 4 — these diagrams: [#issuecomment-5308720889](https://github.com/systemd/systemd/issues/43401#issuecomment-5308720889)
+- Comment 4 — the original 5 diagrams: [#issuecomment-5308720889](https://github.com/systemd/systemd/issues/43401#issuecomment-5308720889)
+- Comment 5 — wild-pointer coredump analysis (supersedes the PATH= theory): [#issuecomment-5308769845](https://github.com/systemd/systemd/issues/43401#issuecomment-5308769845)
 
 ## License
 
