@@ -1,0 +1,42 @@
+digraph PathCorruption {
+    rankdir=TB;
+    bgcolor="#0d0d0d";
+    fontname="Courier";
+    label="ollama.service — Environment=\"PATH=...\" before/after";
+    labelloc=t;
+    fontsize=20;
+    fontcolor="#00ff9f";
+
+    node [shape=box, style=filled, fillcolor="#1a1a2e", color="#00ff9f", fontname="Courier", fontcolor="#e0e0e0", penwidth=2];
+    edge [penwidth=2, fontname="Courier", fontcolor="#ffcc00", color="#00b4ff"];
+
+    origin [label="sudo tee /etc/systemd/system/ollama.service\n(heredoc interpolating a shell\ncommand substitution)", fillcolor="#0d1a2a", color="#00b4ff"];
+    npmfail [label="Substitution ran something like\n'npm bin' — a removed/renamed\nnpm subcommand — which errored", fillcolor="#0d1a2a", color="#00b4ff"];
+    origin -> npmfail;
+
+    subgraph cluster_before {
+        label="BEFORE (corrupted, on disk Aug 12 to Aug 16)";
+        color="#ff0090"; fontcolor="#ff0090"; fontname="Courier"; style=bold;
+        before [shape=note, fillcolor="#2a0d20", color="#ff0090", fontcolor="#e0e0e0",
+            label="Environment=\"PATH=Unknown command: \"bin\"\n\nTo see a list of supported npm commands, run:\n  npm help:/home/jeb/.local/bin:...:/snap/bin\""];
+        annot1 [label="npm's stderr text embedded\nliterally in the value", fillcolor="#2a0d20", color="#ff0090", fontcolor="#ff0090"];
+        annot2 [label="two raw newlines inside\na single directive", fillcolor="#2a0d20", color="#ff0090", fontcolor="#ff0090"];
+        annot3 [label="unescaped \" mid-string\nbefore real $PATH resumes", fillcolor="#2a0d20", color="#ff0090", fontcolor="#ff0090"];
+        before -> annot1; before -> annot2; before -> annot3;
+    }
+    npmfail -> before;
+
+    subgraph cluster_after {
+        label="AFTER (fixed 2026-08-16)";
+        color="#00ff9f"; fontcolor="#00ff9f"; fontname="Courier"; style=bold;
+        after [shape=note, fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#e0e0e0",
+            label="Environment=\"PATH=/home/jeb/.local/bin:\n/home/jeb/bin:...:/snap/bin\"\n(single line, real $PATH only)"];
+    }
+    before -> after [label="  fixed", color="#00ff9f", fontcolor="#00ff9f"];
+
+    parserfx [label="Both v249 (worlock) and v255\n(sandbox) parsers reject the\n\"before\" line identically:\n'Invalid syntax, ignoring'", fillcolor="#1a1a2e", color="#00b4ff"];
+    before -> parserfx [style=dashed, color="#00b4ff", label="  see diagram 04"];
+
+    note [shape=note, fillcolor="#2a2a1a", color="#ffcc00", fontcolor="#ffcc00",
+        label="Because the malformed line is parser-rejected\non every load (not stored as a live value),\nit's an unlikely literal input to the crash —\nsee diagram 02/05. Fixing it was still correct:\nit's a genuinely broken unit file regardless."];
+}

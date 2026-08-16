@@ -1,0 +1,41 @@
+digraph ReproducerMethodology {
+    rankdir=TB;
+    bgcolor="#0d0d0d";
+    fontname="Courier";
+    label="Minimal reproducer: isolated systemd 255 sandbox";
+    labelloc=t;
+    fontsize=20;
+    fontcolor="#00ff9f";
+
+    node [shape=box, style=filled, fillcolor="#1a1a2e", color="#00ff9f", fontname="Courier", fontcolor="#e0e0e0", penwidth=2];
+    edge [penwidth=2, fontname="Courier", fontcolor="#ffcc00", color="#00b4ff"];
+
+    subgraph cluster_host {
+        label="worlock (host)";
+        color="#ff0000"; fontcolor="#ff0000"; fontname="Courier"; style=bold;
+        hostpid1 [label="Real PID 1 (systemd 249)\noff-limits — a repeat crash\nneeds a physical hard reset", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000"];
+    }
+
+    subgraph cluster_container {
+        label="Docker container (isolated)";
+        color="#00b4ff"; fontcolor="#00b4ff"; fontname="Courier"; style=bold;
+        image [label="ubuntu:24.04 + systemd\ninstalled via Dockerfile.repro\n(image: systemd-repro:noble)", fillcolor="#0d1a2a", color="#00b4ff"];
+        runflags [label="docker run --privileged\n--cgroupns=host\n-v /sys/fs/cgroup:/sys/fs/cgroup:rw\nCMD [\"/sbin/init\"]", fillcolor="#0d1a2a", color="#00b4ff"];
+        contpid1 [label="Container's own PID 1\nsystemd 255.4-1ubuntu8.17\n(isolated namespace)", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
+        image -> runflags -> contpid1;
+    }
+    hostpid1 -> image [style=dashed, color="#555555", fontcolor="#888888", label="  never touched"];
+
+    unit [label="repro.service planted:\nsame malformed\nEnvironment=\"PATH=...\"\npattern as ollama.service", fillcolor="#2a0d20", color="#ff0090", fontcolor="#ff0090"];
+    contpid1 -> unit;
+
+    test [label="systemctl start\n+ 5x systemctl daemon-reload", fillcolor="#1a1a2e", color="#00b4ff"];
+    unit -> test;
+
+    result [label="Result: NO crash.\n'Invalid syntax, ignoring'\nlogged every time, cleanly\nskipped. is-system-running:\nrunning throughout.", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f", style="filled,bold"];
+    test -> result;
+
+    compare [shape=note, fillcolor="#2a2a1a", color="#ffcc00", fontcolor="#ffcc00",
+        label="Comparison:\nv249 (worlock, real incident): 4/5 reloads with\n  this exact content were safe, identically logged\nv255 (sandbox, this test):    5/5 reloads safe,\n  identically logged\n⇒ same parser behavior across versions;\n   this input alone does not explain the one crash."];
+    result -> compare [style=invis];
+}

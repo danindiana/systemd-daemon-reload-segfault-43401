@@ -1,0 +1,42 @@
+digraph ReloadInternals {
+    rankdir=TB;
+    bgcolor="#0d0d0d";
+    fontname="Courier";
+    label="Where in daemon-reload did PID 1 actually crash?";
+    labelloc=t;
+    fontsize=20;
+    fontcolor="#00ff9f";
+
+    node [shape=box, style=filled, fillcolor="#1a1a2e", color="#00ff9f", fontname="Courier", fontcolor="#e0e0e0", penwidth=2];
+    edge [penwidth=2, fontname="Courier", fontcolor="#ffcc00", color="#00b4ff"];
+
+    start [label="systemctl daemon-reload\n(journal: \"Reloading.\")", fillcolor="#0d1a2a", color="#00b4ff"];
+
+    subgraph cluster_pre {
+        label="Stage 1: serialize running state (pre-reexec)";
+        color="#ff0000"; fontcolor="#ff0000"; fontname="Courier"; style=bold;
+        serialize [label="Walk currently-running\nunit/process state to a memfd\n(serialize_item_escaped ...)", fillcolor="#3a0d0d", color="#ff0000"];
+        cescape [label="cescape(value)\n— escape one string for\nserialized transfer", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000", style="filled,bold"];
+        crash [label="SIGSEGV\n(frame #3: __strlen_avx2\ninside cescape's strlen)", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000", style="filled,bold,dashed"];
+        serialize -> cescape -> crash;
+    }
+    start -> serialize;
+
+    subgraph cluster_post {
+        label="Stage 2: re-exec + re-parse (NEVER REACHED on Aug 15)";
+        color="#555555"; fontcolor="#888888"; fontname="Courier"; style=dashed;
+        reexec [label="re-exec systemd binary", fillcolor="#1a1a1a", color="#555555", fontcolor="#888888"];
+        deser [label="deserialize transferred state", fillcolor="#1a1a1a", color="#555555", fontcolor="#888888"];
+        reparse [label="re-parse unit files from disk\n(THIS is where 'Invalid syntax,\nignoring' gets logged per-line)", fillcolor="#1a1a1a", color="#555555", fontcolor="#888888"];
+        done [label="reload complete", fillcolor="#1a1a1a", color="#555555", fontcolor="#888888"];
+        reexec -> deser -> reparse -> done;
+    }
+    crash -> reexec [style=dashed, color="#555555", label="  (would have\n  happened next)"];
+
+    evidence [shape=note, fillcolor="#2a2a1a", color="#ffcc00", fontcolor="#ffcc00",
+        label="Key evidence: on 4 earlier reloads that same boot,\n'ollama.service:11: Invalid syntax, ignoring' WAS\nlogged (Stage 2 was reached, harmlessly). On the\ncrashing reload, that line is ABSENT — proof the\ncrash happened in Stage 1, working from stale\nin-memory state, not from parsing the on-disk file."];
+
+    conclusion [label="⇒ Whatever cescape() choked on was\nalready-loaded runtime state,\nnot fresh text from the edited file.", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600", penwidth=2];
+    crash -> conclusion [color="#ff6600", penwidth=2];
+    evidence -> conclusion [style=invis];
+}

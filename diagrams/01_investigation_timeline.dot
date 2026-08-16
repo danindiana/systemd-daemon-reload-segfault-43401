@@ -1,0 +1,50 @@
+digraph InvestigationTimeline {
+    rankdir=TB;
+    bgcolor="#0d0d0d";
+    fontname="Courier";
+    label="systemd/systemd #43401 — Investigation Timeline";
+    labelloc=t;
+    fontsize=20;
+    fontcolor="#00ff9f";
+
+    node [shape=box, style=filled, fillcolor="#1a1a2e", color="#00ff9f", fontname="Courier", fontcolor="#e0e0e0", penwidth=2];
+    edge [penwidth=2, fontname="Courier", fontcolor="#ffcc00", color="#00b4ff"];
+
+    subgraph cluster_aug12 {
+        label="Aug 12 — corruption introduced";
+        color="#ffcc00"; fontcolor="#ffcc00"; fontname="Courier"; style=bold;
+        corrupt [label="ollama.service rewritten via 'sudo tee'\nEnvironment=\"PATH=...\" captures\nstray npm stderr: embedded quote\n+ raw newlines", fillcolor="#2a2a1a", color="#ffcc00"];
+        r1 [label="10:56 boot — unit loaded\n'Invalid syntax, ignoring'\n(parser rejects line 11)", fillcolor="#1a1a2e"];
+        r2 [label="14:25:19 daemon-reload\nsame warning — safe", fillcolor="#1a1a2e"];
+        r3 [label="22:47:32 / :47 / :59\ndaemon-reload x3\nsame warning — safe", fillcolor="#1a1a2e"];
+        corrupt -> r1 -> r2 -> r3;
+    }
+
+    subgraph cluster_crash {
+        label="Aug 15 21:34:37 — the crash";
+        color="#ff0000"; fontcolor="#ff0000"; fontname="Courier"; style=bold;
+        reload5 [label="5th daemon-reload\nNO parse-warning logged\n(never reached re-parse stage)", fillcolor="#3a0d0d", color="#ff0000"];
+        segv [label="SIGSEGV in cescape()\nvia serialize_item_escaped()", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000", style="filled,bold"];
+        freeze [label="PID 1 catches SIGSEGV,\ndumps core, 'Freezing execution'\n(deliberate — avoids kernel panic)", fillcolor="#3a0d0d", color="#ff0000"];
+        dbus [label="Every D-Bus call to\norg.freedesktop.systemd1\ntimes out (25s each)", fillcolor="#3a0d0d", color="#ff0000"];
+        reset [label="No software recovery path\n→ physical hard reset", fillcolor="#3a0d0d", color="#ff0000", fontcolor="#ff0000"];
+        reload5 -> segv -> freeze -> dbus -> reset;
+    }
+    r3 -> reload5 [color="#ff0000", penwidth=3, label="  same file,\n  same content"];
+
+    subgraph cluster_aug16 {
+        label="Aug 16 — investigation \& response";
+        color="#00b4ff"; fontcolor="#00b4ff"; fontname="Courier"; style=bold;
+        filed [label="Issue #43401 filed\n(backtrace + journal evidence)", fillcolor="#0d1a2a", color="#00b4ff"];
+        ask [label="yuwata asks for\n'systemctl cat' + newer-release repro", fillcolor="#0d1a2a", color="#00b4ff"];
+        found [label="systemctl cat reveals\nthe corrupted PATH= line\n(verified with cat -A, not a\nterminal artifact)", fillcolor="#2a2a1a", color="#ffcc00"];
+        fix [label="PATH= line fixed\ndaemon-reload succeeds cleanly", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
+        repro [label="v255 reproducer built\n(isolated Docker container)\nNO crash — same rejection behavior", fillcolor="#0d2a1a", color="#00ff9f", fontcolor="#00ff9f"];
+        correction [label="Journal re-analysis:\nline survived 4 prior reloads\n→ earlier claim walked back", fillcolor="#3a2200", color="#ff6600", fontcolor="#ff6600"];
+        filed -> ask -> found -> fix -> repro -> correction;
+    }
+    reset -> filed [color="#00b4ff"];
+
+    legend [shape=note, fillcolor="#1a1a2e", color="#ffcc00", fontcolor="#ffcc00",
+        label="Legend\n#ffcc00 config/evidence   #ff0000 crash/blocked\n#00b4ff diagnostic step   #00ff9f fix/confirmed\n#ff6600 revised/open hypothesis"];
+}
